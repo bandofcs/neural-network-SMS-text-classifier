@@ -19,21 +19,13 @@ For this challenge, you will use the [SMS Spam Collection dataset](htt
 The first two cells import the libraries and data. The final cell tests your model and function. Add your code in between these cells.
 """
 
-# import libraries
-try:
-  # %tensorflow_version only exists in Colab.
-  !pip install tf-nightly
-except Exception:
-  pass
+import numpy as np
+
+import tensorflow_datasets as tfds
 import tensorflow as tf
 import pandas as pd
-from tensorflow import keras
-!pip install tensorflow-datasets
-import tensorflow_datasets as tfds
-import numpy as np
-import matplotlib.pyplot as plt
 
-print(tf.__version__)
+tfds.disable_progress_bar()
 
 # get data files
 !wget https://cdn.freecodecamp.org/project-data/sms/train-data.tsv
@@ -42,17 +34,77 @@ print(tf.__version__)
 train_file_path = "train-data.tsv"
 test_file_path = "valid-data.tsv"
 
+train_dataset1 = pd.read_csv(train_file_path, sep="\t", header=None)
+train_dataset1[0] = pd.Categorical(train_dataset1[0])
+train_dataset1['ham0_spam1'] = train_dataset1[0].cat.codes
+train_dataset1.columns=["type","message",'ham0_spam1']
+
+test_dataset1 = pd.read_csv(test_file_path, sep="\t", header=None)
+test_dataset1[0] = pd.Categorical(test_dataset1[0])
+test_dataset1['ham0_spam1'] = test_dataset1[0].cat.codes
+test_dataset1.columns=["type","message",'ham0_spam1']
+
+train_label, test_label = train_dataset1['ham0_spam1'].values, test_dataset1['ham0_spam1'].values
+train_dataset = tf.data.Dataset.from_tensor_slices((train_dataset1["message"].values, np.int64(train_label)))
+test_dataset = tf.data.Dataset.from_tensor_slices((test_dataset1["message"].values, np.int64(test_label)))
+
+train_dataset.element_spec
+
+# train_dataset[0] = pd.factorize(train_dataset[0])[0]
+# test_dataset[0]= pd.factorize(test_dataset[0])[0]
 
 
+# import missingno as msno
+# msno.matrix(train_dataset)
+# import seaborn as sns
+# sns.heatmap(test_dataset.isnull(),cbar=False)
+# train_dataset.dropna()
+# test_dataset.dropna()
 
+BUFFER_SIZE = 100
+BATCH_SIZE = 32
+
+train_dataset = train_dataset.shuffle(BUFFER_SIZE).batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+test_dataset = test_dataset.batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+VOCAB_SIZE = 1000
+test_dataset.element_spec
+
+from tensorflow.keras.layers.experimental.preprocessing import TextVectorization
+
+
+encoder = TextVectorization(output_mode='int',max_tokens=VOCAB_SIZE,output_sequence_length=VOCAB_SIZE)
+encoder.adapt(train_dataset.map(lambda text,label: text))
+vocab = np.array(encoder.get_vocabulary())
+vocab[:20]
+
+model = tf.keras.Sequential([
+    encoder,
+    tf.keras.layers.Embedding(len(encoder.get_vocabulary()),64,
+        # Use masking to handle the variable sequence lengths
+        mask_zero=True),
+    tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64,  return_sequences=True)),
+    tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(32)),
+    tf.keras.layers.Dense(64, activation='relu'),
+    tf.keras.layers.Dropout(0.2),
+    tf.keras.layers.Dense(1)
+])
+print([layer.supports_masking for layer in model.layers])
+model.compile(
+    loss=tf.keras.losses.BinaryCrossentropy(from_logits=True),
+    optimizer=tf.keras.optimizers.Adam(1e-4),
+    metrics=['accuracy'],
+)
+
+history = model.fit(train_dataset,validation_data=test_dataset,validation_steps=30, epochs=10)
 
 # function to predict messages based on model
 # (should return list containing prediction and label, ex. [0.008318834938108921, 'ham'])
 def predict_message(pred_text):
+    prediction = model.predict([pred_text])
+    p = prediction[0][0]
 
 
-
-  return (prediction)
+    return [p, "ham" if p <0.5 else "spam"]
 
 pred_text = "how are you doing today?"
 
